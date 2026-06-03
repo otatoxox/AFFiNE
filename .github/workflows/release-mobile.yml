@@ -163,8 +163,13 @@ jobs:
           DATA: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICE_JSON }}
         run: |
           set -euo pipefail
-          printf '%s' "$DATA" | base64 -di > packages/frontend/apps/android/App/app/google-services.json
-
+          # 1. 先剔除base64字符串里所有换行、空格
+          CLEAN_DATA="$(echo "$DATA" | tr -d '\n\r ')"
+          # 2. 标准base64解码，统一用-d（POSIX标准，兼容所有ubuntu runner）
+          echo "$CLEAN_DATA" | base64 -d > packages/frontend/apps/android/App/app/google-services.json
+          # 可选：校验JSON合法性（提前发现错误）
+          apt update && apt install -y jq
+          jq . packages/frontend/apps/android/App/app/google-services.json
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
         timeout-minutes: 10
