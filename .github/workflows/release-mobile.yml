@@ -142,8 +142,7 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: 'write'
+    # 去掉id-token权限（GCP联邦鉴权用，现在无用）
     needs:
       - build-android-web
     steps:
@@ -157,12 +156,15 @@ jobs:
         with:
           name: android
           path: packages/frontend/apps/android/dist
+
+      # 生成google-services.json，解决之前json缺失报错（必须保留）
       - name: Load Google Service file
         env:
           DATA: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICE_JSON }}
         run: |
           set -euo pipefail
           printf '%s' "$DATA" | base64 -di > packages/frontend/apps/android/App/app/google-services.json
+
       - name: Setup Node.js
         uses: ./.github/actions/setup-node
         timeout-minutes: 10
@@ -172,37 +174,33 @@ jobs:
           electron-install: false
           hard-link-nm: false
           enableScripts: false
+
       - name: Setup Rust
         uses: ./.github/actions/build-rust
         with:
           target: 'aarch64-linux-android'
           package: 'affine_mobile_native'
           no-build: 'true'
+
       - name: Cap sync
         run: yarn workspace @affine/android cap sync
+
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Auth gcloud
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: 'projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github-actions-helm-deploy'
-          service_account: '${{ secrets.GCP_HELM_DEPLOY_SERVICE_ACCOUNT }}'
-          token_format: 'access_token'
-          project_id: '${{ secrets.GCP_PROJECT_ID }}'
-          access_token_scopes: 'https://www.googleapis.com/auth/androidpublisher'
+
+      # ==========【已删除3步GCP相关】auth鉴权、版本自增、上传GooglePlay ==========
+      # - name: Auth gcloud
+      # - name: Auto increment version code
+      # - name: Upload to Google Play
+
       - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
           cache: 'gradle'
-      - name: Auto increment version code
-        id: bump
-        run: yarn affine @affine/playstore-auto-bump bump
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-      - name: Build
+
+      - name: Build 签名AAB安装包
         run: |
           echo -n "${{ env.AFFINE_ANDROID_SIGN_KEYSTORE }}" | base64 --decode > packages/frontend/apps/android/affine.keystore
           yarn workspace @affine/android cap build android --flavor ${{ env.BUILD_TYPE }} --androidreleasetype AAB
@@ -211,13 +209,10 @@ jobs:
           AFFINE_ANDROID_KEYSTORE_ALIAS_PASSWORD: ${{ secrets.AFFINE_ANDROID_KEYSTORE_ALIAS_PASSWORD }}
           AFFINE_ANDROID_SIGN_KEYSTORE: ${{ secrets.AFFINE_ANDROID_SIGN_KEYSTORE }}
           VERSION_NAME: ${{ inputs.app-version }}
-      - name: Upload to Google Play
-        uses: r0adkll/upload-google-play@v1
+
+      # 新增：打包产物上传Artifact，下载AAB
+      - name: Upload Android AAB Artifact
+        uses: actions/upload-artifact@v4
         with:
-          serviceAccountJson: ${{ steps.auth.outputs.credentials_file_path }}
-          packageName: app.affine.pro
-          releaseName: ${{ inputs.app-version }}
-          releaseFiles: packages/frontend/apps/android/App/app/build/outputs/bundle/${{ env.BUILD_TYPE }}Release/app-${{ env.BUILD_TYPE }}-release-signed.aab
-          track: internal
-          status: draft
-          existingEditId: ${{ steps.bump.outputs.EDIT_ID }}
+          name: android-aab-${{ inputs.build-type }}
+          path: packages/frontend/apps/android/App/app/build/outputs/bundle/${{ env.BUILD_TYPE }}Release/*.aab
